@@ -13,8 +13,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.3.0
+          version: 4.3
           use-dotnet: false
+          include-templates: true
+      - name: Fix scripts folder if needed
+        run: |
+          if [ ! -d "scripts" ]; then
+            mkdir -p scripts
+            mv *.gd scripts/ || true
+          fi
       - name: Export Web
         run: |
           mkdir -p build/web
@@ -31,4 +38,3 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-
