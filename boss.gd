@@ -106,8 +106,8 @@ func setup(g, data: Dictionary) -> void:
 	dmg = data["dmg"]
 	max_hp = data["hp"]
 	if int(data.get("index", 1)) == 1:
-		max_hp *= 0.6
-		d["cd"] = float(d.get("cd", 1.2)) * 2.5
+		max_hp *= 0.4
+		d["cd"] = float(d.get("cd", 1.2)) * 1.6
 	hp = max_hp
 	prologue = data.get("prologue", false)
 	if prologue:
@@ -119,7 +119,7 @@ func setup(g, data: Dictionary) -> void:
 		position = Vector2(1000.0, 380.0)
 	if prologue:
 		position = Vector2(1010.0, Cfg.FLOOR - size.y * 0.5)
-	cd = 3.5 if int(data.get("index", 1)) == 1 else 1.2
+	cd = 2.0 if int(data.get("index", 1)) == 1 else 1.2
 	_roll_twists(int(d.get("index", 1)))
 	if has_twist("rapid_special"):
 		sp_cd = 3.0
@@ -242,49 +242,6 @@ func _check_phase() -> void:
 func _spawn_minion_wave() -> void:
 	var cap := 3 + int(tier * 6.0)
 	if game.minion_count() >= cap:
-		return
-	var pool: Array = Minion.pool(bool(d["hell"]))
-	var kinds: Array = [pool.pick_random(), pool.pick_random()]
-	var n := mini(2 + int(tier * 3.0) + (phase - 1), cap - game.minion_count())
-	game.sfx.play("roar", -10.0, 1.8)
-	for i in n:
-		var kind: String = kinds[i % 2]
-		var fl: bool = Minion.TYPES[kind]["fly"]
-		var left := (i % 2 == 0)
-		var pos := Vector2(70.0 if left else Cfg.W - 70.0, 70.0 if fl else Cfg.FLOOR - 20.0)
-		_later(0.01 + i * 0.35, func(): game.add_minion(kind, pos, tier))
-
-func _drift(dt: float) -> void:
-	if fly:
-		position.y += sin(t * 3.0) * 10.0 * dt
-	if mode == "rest" and not fly:
-		position.y = Cfg.FLOOR - size.y * 0.5
-
-func _move(dt: float, p) -> void:
-	var spd := float(d["speed"]) * (1.0 + 0.2 * (phase - 1)) * (1.35 if has_twist("fleet") else 1.0)
-	if fly:
-		var tx := clampf(p.position.x + sin(t * 0.7) * 300.0, 120.0, 1160.0)
-		var ty := 300.0 + sin(t * 1.3) * 45.0
-		position.x = move_toward(position.x, tx, spd * 1.3 * dt)
-		position.y = move_toward(position.y, ty, 140.0 * dt)
-	else:
-		var dx: float = p.position.x - position.x
-		if absf(dx) > 150.0:
-			position.x += signf(dx) * spd * dt
-		position.y = Cfg.FLOOR - size.y * 0.5
-	position.x = clampf(position.x, 80.0, Cfg.W - 80.0)
-	cd -= dt
-	if cd <= 0.0:
-		_choose()
-
-func _choose() -> void:
-	var pool: Array = (d["pool"] as Array).duplicate()
-	if phase >= 2:
-		pool.append_array(d["p2"])
-	if pool.size() > 1:
-		pool = pool.filter(func(a): return a != last_atk)
-	var a: String = pool.pick_random()
-
 		return
 	var pool: Array = Minion.pool(bool(d["hell"]))
 	var kinds: Array = [pool.pick_random(), pool.pick_random()]
