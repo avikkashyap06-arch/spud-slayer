@@ -3,18 +3,18 @@ extends Node2D
 ## Spud. Position is at his feet.
 
 const GRAV := 2300.0
-const MOVE := 400.0
-const JUMP_V := -900.0
-const DJUMP_V := -800.0
+const MOVE := 430.0
+const JUMP_V := -1050.0
+const DJUMP_V := -850.0
 const ROLL_T := 0.38
-const ROLL_SPEED := 560.0
-const DASH_T := 0.2
-const DASH_SPEED := 780.0
-const ROLL_COST := 28.0
-const DASH_COST := 25.0
+const ROLL_SPEED := 660.0
+const DASH_T := 0.22
+const DASH_SPEED := 880.0
+const ROLL_COST := 15.0
+const DASH_COST := 15.0
 const ATTACK_T := 0.18
-const ATTACK_CD := 0.30
-const ATTACK_COST := 8.0
+const ATTACK_CD := 0.22
+const ATTACK_COST := 4.0
 
 var game
 var vel := Vector2.ZERO
