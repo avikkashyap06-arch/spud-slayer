@@ -3,9 +3,9 @@ extends Node2D
 ## Spud. Position is at his feet.
 
 const GRAV := 2300.0
-const MOVE := 340.0
-const JUMP_V := -800.0
-const DJUMP_V := -720.0
+const MOVE := 400.0
+const JUMP_V := -900.0
+const DJUMP_V := -800.0
 const ROLL_T := 0.38
 const ROLL_SPEED := 560.0
 const DASH_T := 0.2
