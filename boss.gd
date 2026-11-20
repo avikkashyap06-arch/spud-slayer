@@ -512,3 +512,88 @@ func _act(dt: float, p) -> void:
 				position.y = Cfg.FLOOR - size.y * 0.5
 				game.shake_add(12.0)
 				game.sfx.play("boom")
+				game.fx.burst(Vector2(position.x, Cfg.FLOOR), 20, acc, 300.0, 6.0, 0.6)
+				for s in [-1, 1]:
+					Hazard.wave(game, position.x + s * 50.0, s * (300.0 + 150.0 * tier), 42.0, _dmg(), bolt_col)
+				_end_attack(0.8)
+		"dive":
+			mode_t -= dt
+			if dive_stage == 0:
+				var to := act_target - position
+				var step := (760.0 + 200.0 * tier) * dt
+				if to.length() <= step or mode_t <= 0.0:
+					dive_stage = 1
+					game.fx.burst(position, 12, acc, 240.0, 5.0, 0.4)
+				else:
+					position += to.normalized() * step
+			else:
+				position.y = move_toward(position.y, 320.0, 520.0 * dt)
+				if position.y <= 330.0:
+					_end_attack(0.6)
+	if contact and hurt_rect().intersects(p.hurt_rect()):
+		p.take_hit(_dmg(), position.x)
+
+func _tick_prologue(dt: float) -> void:
+	_run_queue(dt)
+	if frozen:
+		return
+	var p = game.player
+	p_spear_t -= dt
+	if p_spear_t <= 0.0:
+		p_spear_t = 1.5
+		Hazard.pillar(game, p.position.x, 26.0, 0.8, 0.22, 1, Color(1.0, 0.92, 0.5), "spear")
+		Hazard.pillar(game, clampf(p.position.x + randf_range(-240.0, 240.0), 40.0, 900.0), 26.0, 0.8, 0.22, 1, Color(1.0, 0.92, 0.5), "spear")
+	p_wave_t -= dt
+	if p_wave_t <= 0.0:
+		p_wave_t = 4.6
+		Hazard.wave(game, position.x - 100.0, -330.0, 46.0, 1, Color(1.0, 0.88, 0.4))
+		game.sfx.play("boom", -8.0)
+		game.shake_add(5.0)
+
+func _c(base: Color) -> Color:
+	return base.lerp(Color.WHITE, flash * 0.7)
+
+func _poly(cx: float, cy: float, rx: float, ry: float, n: int = 20, wob: float = 0.0, ph: float = 0.0) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		var k := 1.0 + wob * sin(a * 3.0 + ph)
+		pts.append(Vector2(cx + cos(a) * rx * k, cy + sin(a) * ry * k))
+	return pts
+
+func _mirror(pts: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in range(pts.size() - 1, -1, -1):
+		out.append(Vector2(-pts[i].x, pts[i].y))
+	return out
+
+func _eyes(y: float, gap: float, r: float, c: Color) -> void:
+	draw_circle(Vector2(-gap, y), r * 1.7, Color(c.r, c.g, c.b, 0.3))
+	draw_circle(Vector2(gap, y), r * 1.7, Color(c.r, c.g, c.b, 0.3))
+	draw_circle(Vector2(-gap, y), r, c)
+	draw_circle(Vector2(gap, y), r, c)
+	draw_circle(Vector2(-gap, y), r * 0.4, Color.BLACK)
+	draw_circle(Vector2(gap, y), r * 0.4, Color.BLACK)
+
+func _draw() -> void:
+	var wob := Vector2.ZERO
+	if dying:
+		wob = Vector2(randf_range(-6, 6), randf_range(-4, 4))
+	var bob := sin(t * 2.2) * 4.0 if fly or prologue else 0.0
+	draw_set_transform(wob + Vector2(0, bob), 0.0, Vector2(-1.0 if face > 0 else 1.0, 1.0))
+	var wr := wind_ratio()
+	if wr > 0.0:
+		var gr := maxf(size.x, size.y) * 0.62
+		draw_circle(Vector2.ZERO, gr * (0.6 + 0.5 * wr), Color(acc.r, acc.g, acc.b, 0.22 * wr))
+	if contact:
+		draw_circle(Vector2.ZERO, maxf(size.x, size.y) * 0.58, Color(acc.r, acc.g, acc.b, 0.15))
+	BossArt.draw(self)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if phase > 1 and not dying:
+		draw_arc(Vector2.ZERO, maxf(size.x, size.y) * 0.62, 0.0, TAU, 40, Color(acc.r, acc.g, acc.b, 0.25 + 0.15 * sin(t * 6.0)), 3.0)
+
+func _blink() -> void:
+	var tx := clampf(game.player.position.x + (randf_range(220.0, 420.0) * (1.0 if randf() < 0.5 else -1.0)), 100.0, Cfg.W - 100.0)
+	game.fx.burst(position, 14, acc, 220.0, 5.0, 0.4)
+	position.x = tx
+	game.fx.burst(position, 14, acc, 220.0, 5.0, 0.4)
