@@ -20,8 +20,8 @@ var game
 var vel := Vector2.ZERO
 var on_ground := false
 var facing := 1
-var max_hp := 3
-var hp := 3
+var max_hp := 1
+var hp := 1
 var max_stamina := 100.0
 var stamina := 100.0
 var stam_delay := 0.0
@@ -72,10 +72,10 @@ func attack_rect() -> Rect2:
 	return Rect2(x, position.y - 84, 90, 84)
 
 func apply_upgrades() -> void:
-	max_hp = 3 + game.hp_lvl
+	max_hp = 1 + game.hp_lvl
 	max_stamina = 100.0 + 10.0 * game.sta_lvl
 	damage = 10.0 + 3.0 * game.atk_lvl
-	has_wings = true
+	has_wings = game.wings
 
 func full_heal() -> void:
 	hp = max_hp
@@ -342,6 +342,57 @@ func _draw() -> void:
 		return
 	var stretch := clampf(-vel.y / 1800.0, -0.18, 0.22)
 	var sc := Vector2(1.0 - stretch * 0.5 + squash * 0.25, 1.0 + stretch - squash * 0.25)
+	var rot := 0.0
+	if roll_t > 0.0:
+		rot = (1.0 - roll_t / ROLL_T) * TAU * roll_dir
+	draw_set_transform(Vector2(0, -28.0 * sc.y), rot, Vector2(sc.x * facing, sc.y))
+	# ember wings
+	if has_wings:
+		var fl := sin(anim_t * 18.0) * 6.0
+		var wing := PackedVector2Array([Vector2(-14, -8), Vector2(-52, -34 + fl), Vector2(-40, -6), Vector2(-56, 10 + fl), Vector2(-14, 8)])
+		draw_colored_polygon(wing, Color(1.0, 0.4, 0.08, 0.75))
+	# boots
+	Art.shape(self, Art.P([-18, 20, -4, 20, -2, 30, -20, 30]), Color(0.16, 0.11, 0.08), 0.0, 2.0)
+	Art.shape(self, Art.P([4, 20, 18, 20, 22, 30, 4, 30]), Color(0.16, 0.11, 0.08), 0.0, 2.0)
+	# pixel-art body (hand-placed sprite)
+	PixSprite.draw(self, PixSprite.SPUD, Vector2(0, -1), 3.0, hurt_flash())
+	if armor:
+		draw_arc(Vector2.ZERO, 26.0, PI * 0.9, PI * 2.1, 14, Color(0.3, 0.42, 0.2), 6.0)
+		draw_circle(Vector2(-18, -18), 7.0, Color(0.3, 0.42, 0.2))
+		draw_circle(Vector2(18, -18), 7.0, Color(0.3, 0.42, 0.2))
+	# stone skin
+	if skin_t > 0.0:
+		var st := body_pts.duplicate()
+		for i in st.size():
+			st[i] = st[i] * 1.12
+		draw_colored_polygon(st, Color(0.55, 0.58, 0.63, 0.82))
+		draw_line(Vector2(-8, -20), Vector2(2, -4), Color(0.3, 0.32, 0.36), 2.0)
+		draw_line(Vector2(2, -4), Vector2(14, 6), Color(0.3, 0.32, 0.36), 2.0)
+		draw_circle(Vector2(8, -6), 5.0, Color.WHITE)
+		draw_circle(Vector2(10, -6), 2.4, Color.BLACK)
+		draw_circle(Vector2(-3, -6), 4.0, Color.WHITE)
+		draw_circle(Vector2(-1, -6), 2.0, Color.BLACK)
+	# earned armour pieces (tiers from boss drops)
+	if game != null and not prologue:
+		_draw_armor_pieces()
+	# Root-Blade
+	var swing := 0.0
+	if attack_t > 0.0:
+		swing = 1.0 - attack_t / ATTACK_T
+	var ang := -0.7 + (swing * 2.2 - 0.9 if attack_t > 0.0 else 0.0)
+	var base := Vector2(18, 6)
+	var blade := PackedVector2Array([base + Vector2(0, 4), base + Vector2(10, -2), base + Vector2(46, -14), base + Vector2(58, -30), base + Vector2(40, -4), base + Vector2(8, 8)])
+	draw_colored_polygon(_rot(blade, ang, base), Color("2f4a22"))
+	draw_polyline(_rot(PackedVector2Array([base + Vector2(10, -2), base + Vector2(46, -14), base + Vector2(58, -30)]), ang, base), Color("9fd070"), 2.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# slash arc
+	if attack_t > 0.0:
+		var k := 1.0 - attack_t / ATTACK_T
+		var a0 := -1.5 if facing > 0 else PI + 1.5
+		var a1 := 0.9 if facing > 0 else PI - 0.9
+		var cc := Vector2(facing * 6.0, -34.0)
+		draw_arc(cc, 66.0, a0, lerpf(a0, a1, minf(1.0, k * 1.6)), 14, Color(0.85, 1.0, 0.65, 0.85 * (1.0 - k * 0.6)), 7.0)
+
 const TIER_COLS := [Color(0.45, 0.4, 0.36), Color(0.5, 0.5, 0.55), Color(0.6, 0.62, 0.68), Color(0.35, 0.55, 0.75), Color(0.3, 0.65, 0.45), Color(0.8, 0.65, 0.25), Color(0.85, 0.35, 0.25), Color(0.7, 0.4, 0.85), Color(0.95, 0.9, 0.6)]
 
 func _tc(slot: int) -> Color:
