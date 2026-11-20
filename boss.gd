@@ -106,9 +106,6 @@ func setup(g, data: Dictionary) -> void:
 	dmg = data["dmg"]
 	max_hp = data["hp"]
 	max_hp = data["hp"]
-	if int(data.get("index", 1)) == 1:
-		max_hp *= 0.6
-		d["cd"] = float(d.get("cd", 1.2)) * 2.5
 	hp = max_hp
 	prologue = data.get("prologue", false)
 	if prologue:
