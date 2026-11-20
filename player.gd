@@ -186,7 +186,7 @@ func _actions(dir: float) -> void:
 			game.sfx.play("jump", -6.0)
 			game.fx.dust(position, 4)
 			squash = -0.4
-		elif has_wings and air_jumps_used < 1 and not on_ground:
+		elif air_jumps_used < 1 and not on_ground:
 			vel.y = DJUMP_V
 			air_jumps_used += 1
 			jump_buf = 0.0
