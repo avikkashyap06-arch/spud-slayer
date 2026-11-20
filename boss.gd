@@ -1,282 +1,696 @@
-class_name Arena
+class_name Boss
 extends Node2D
-## Procedural backgrounds, floor, platforms and the Roots of Renewal shrine.
+## A boss. Position is the CENTER of the body. Behaviour is data-driven by Lore.boss(i).
 
-var theme := "title"      # title, hell, abyss, heaven, storm, sanctuary, throne
-var depth := 0.5          # hell: 1 = deepest/darkest
-var platforms: Array = []
-var shrine := false
+const WIND := {"fan": 0.5, "ring": 0.7, "rain": 0.5, "homing": 0.5, "wave": 0.5, "pillars": 0.6,
+	"judgment": 1.0, "spears": 0.6, "charge": 0.6, "leap": 0.45, "dive": 0.6, "special": 1.1}
+
+var game
+var d: Dictionary = {}
+var hp := 100.0
+var max_hp := 100.0
+var size := Vector2(100, 100)
+var fly := false
+var col := Color.RED
+var acc := Color.ORANGE
+var fam := "imp"
+var arch := ""
+var prologue := false
+var phase := 1
 var t := 0.0
-var motes: Array = []
-var deco: Array = []
-var lightning := 0.0
-var next_bolt := 4.0
-var rng := RandomNumberGenerator.new()
+var flash := 0.0
+var face := -1
+var mode := "move"          # move, wind, act, rest
+var atk := ""
+var last_atk := ""
+var mode_t := 0.0
+var wind_total := 0.5
+var cd := 1.2
+var vel := Vector2.ZERO
+var dying := false
+var die_t := 0.0
+var queue: Array = []
+var active := false         # false while the intro card is up
+var contact := false
+var act_dir := 1
+var act_target := Vector2.ZERO
+var dive_stage := 0
+var tier := 0.0
+var dmg := 1
+var raise := 0.0            # God raising a hand (prologue beam)
+var frozen := false
+var p_spear_t := 1.0
+var p_wave_t := 3.0
+var bolt_col := Color.ORANGE
+var minion_t := 5.0
+var sp_cd := 6.0
+var guard_t := 0.0
+var sp_heal_cd := 0.0
+var twists: Array = []
+var melee_hits := 0
+var blink_pending := false
+var volley := 1.0
 
-func set_theme(th: String, dep: float, layout: int, show_shrine: bool = false) -> void:
-	theme = th
-	depth = dep
-	shrine = show_shrine
-	rng.seed = 1000 + layout * 17 + int(dep * 100.0) + th.hash() % 1000
-	match layout % 3:
-		0: platforms = [Rect2(180, 470, 240, 14), Rect2(860, 470, 240, 14)]
-		1: platforms = [Rect2(480, 450, 320, 14)]
-		_: platforms = [Rect2(110, 500, 170, 14), Rect2(555, 400, 170, 14), Rect2(1000, 500, 170, 14)]
-	if th == "title" or show_shrine:
-		platforms = []
-	# static decoration lists
-	deco.clear()
-	for i in 22:
-		deco.append({"x": rng.randf_range(0, Cfg.W), "a": rng.randf_range(20, 110), "b": rng.randf_range(40, 190), "c": rng.randf()})
-	motes.clear()
-	for i in 70:
-		motes.append({"p": Vector2(rng.randf_range(0, Cfg.W), rng.randf_range(0, Cfg.H)), "s": rng.randf_range(0.3, 1.0), "z": rng.randf_range(1.5, 4.0)})
-	queue_redraw()
+const TWISTS := {
+	"enrage": "ENRAGED: attacks twice as fast below 30% health",
+	"regen": "REGENERATING: slowly heals over time",
+	"blink": "BLINKING: teleports after every attack",
+	"thorns": "THORNED: every 5th melee hit burns you",
+	"rapid_special": "ARCANE: special ability comes much sooner",
+	"bulwark": "BULWARK: takes 15% less damage",
+	"fleet": "FLEET: moves much faster",
+	"volley": "BARRAGE: fires 40% more projectiles",
+	"vampire": "VAMPIRIC: heals when you are hurt",
+	"summoner": "SUMMONER: calls minions twice as often",
+	"frenzy": "FRENZIED: shorter wind-ups in later phases",
+}
+const TWIST_KEYS := ["enrage", "regen", "blink", "thorns", "rapid_special", "bulwark", "fleet", "volley", "vampire", "summoner", "frenzy"]
 
+func _roll_twists(i: int) -> void:
+	twists = []
+	var first: String = TWIST_KEYS[(i * 7 + 3) % TWIST_KEYS.size()]
+	twists.append(first)
+	if i >= 20:
+		var second: String = TWIST_KEYS[(i * 5 + 1) % TWIST_KEYS.size()]
+		if second == first:
+			second = TWIST_KEYS[(i * 5 + 2) % TWIST_KEYS.size()]
+		twists.append(second)
+	if i == 25 or i == 50:
+		twists = ["enrage", "summoner", "volley"]
+	volley = 1.4 if "volley" in twists else 1.0
+
+func has_twist(k: String) -> bool:
+	return k in twists
+
+func twist_text() -> String:
+	var out := ""
+	for k in twists:
+		out += String(TWISTS[k]) + "\n"
+	return out.strip_edges()
+
+func on_player_hurt() -> void:
+	if has_twist("vampire") and not dying and active:
+		hp = minf(max_hp, hp + max_hp * 0.03)
+		game.fx.popup(position + Vector2(0, -size.y * 0.5 - 10.0), "DRAIN", Color(0.9, 0.3, 0.4))
+
+func setup(g, data: Dictionary) -> void:
+	game = g
+	d = data
+	fam = data["family"]
+	arch = data["arch"]
+	size = data["size"]
+	fly = data["fly"]
+	col = data["col"]
+	acc = data["acc"]
+	tier = data["tier"]
+	dmg = data["dmg"]
+	max_hp = data["hp"]
+	hp = max_hp
+	prologue = data.get("prologue", false)
+	if prologue:
+		size = Vector2(260, 640)
+		fly = false
+	bolt_col = acc if not (fam == "archangel") else acc.lerp(col, 0.4)
+	position = Vector2(1000.0, Cfg.FLOOR - size.y * 0.5)
+	if fly:
+		position = Vector2(1000.0, 330.0)
+	if prologue:
+		position = Vector2(1010.0, Cfg.FLOOR - size.y * 0.5)
+	cd = 1.2
+	_roll_twists(int(d.get("index", 1)))
+	if has_twist("rapid_special"):
+		sp_cd = 3.0
+
+func can_be_hit() -> bool:
+	return not dying and (active or prologue)
+
+func hurt_rect() -> Rect2:
+	if prologue:
+		return Rect2(position.x - 120.0, Cfg.FLOOR - 110.0, 240.0, 110.0)
+	return Rect2(position.x - size.x * 0.5, position.y - size.y * 0.5, size.x, size.y)
+
+func take_damage(amount: float, _melee: bool = false) -> void:
+	if dying or not (active or prologue):
+		return
+	flash = 1.0
+	if prologue:
+		return
+	if has_twist("bulwark"):
+		amount *= 0.85
+	if _melee and has_twist("thorns"):
+		melee_hits += 1
+		if melee_hits % 5 == 0:
+			game.player.take_hit(1, position.x)
+	if guard_t > 0.0:
+		amount *= 0.15
+		game.fx.burst(position + Vector2(-face * size.x * 0.4, -10), 4, Color(0.9, 0.9, 1.0), 200.0, 3.0, 0.3)
+	hp -= amount
+	game.fx.popup(position + Vector2(randf_range(-30, 30), -size.y * 0.5 - 6.0), str(int(amount)), Color(1, 1, 0.8))
+	if hp <= 0.0:
+		hp = 0.0
+		dying = true
+		die_t = 0.0
+		queue.clear()
+		game.on_boss_dead()
+
+# ------------------------------------------------------------------ tick
 func tick(dt: float) -> void:
 	t += dt
-	lightning = maxf(0.0, lightning - dt * 3.0)
-	if theme == "storm":
-		next_bolt -= dt
-		if next_bolt <= 0.0:
-			lightning = 1.0
-			next_bolt = randf_range(3.0, 7.0)
-	for m in motes:
-		match theme:
-			"hell", "abyss":
-				m["p"].y -= (20.0 + 40.0 * m["s"]) * dt
-				m["p"].x += (30.0 + 70.0 * m["s"]) * dt
-			"title":
-				m["p"].y -= 10.0 * m["s"] * dt
-			_:
-				m["p"].y += 12.0 * m["s"] * dt
-				m["p"].x += 8.0 * m["s"] * dt
-		if m["p"].y < -10.0: m["p"].y = Cfg.H + 10.0
-		if m["p"].y > Cfg.H + 10.0: m["p"].y = -10.0
-		if m["p"].x > Cfg.W + 10.0: m["p"].x = -10.0
+	flash = maxf(0.0, flash - dt * 5.0)
+	sp_cd -= dt
+	guard_t = maxf(0.0, guard_t - dt)
+	sp_heal_cd -= dt
+	if has_twist("regen") and active and not dying:
+		hp = minf(max_hp, hp + max_hp * 0.0008 * dt)
+	if dying:
+		die_t += dt
+		modulate.a = clampf(1.0 - maxf(0.0, die_t - 1.0) / 1.2, 0.0, 1.0)
+		if int(die_t * 20.0) % 3 == 0:
+			game.fx.burst(position + Vector2(randf_range(-size.x, size.x) * 0.4, randf_range(-size.y, size.y) * 0.4), 3, acc, 220.0, 5.0, 0.5)
+		queue_redraw()
+		return
+	if prologue:
+		_tick_prologue(dt)
+		queue_redraw()
+		return
+	if not active:
+		queue_redraw()
+		return
+	_run_queue(dt)
+	_check_phase()
+	minion_t -= dt
+	if minion_t <= 0.0 and mode != "act":
+		minion_t = maxf(4.5, 10.0 - 5.0 * tier) * randf_range(0.8, 1.2) * (0.5 if has_twist("summoner") else 1.0)
+		_spawn_minion_wave()
+	var p = game.player
+	if mode != "act" or atk == "leap":
+		face = 1 if p.position.x > position.x else -1
+	match mode:
+		"move": _move(dt, p)
+		"wind":
+			_drift(dt)
+			mode_t -= dt
+			if mode_t <= 0.0:
+				_execute()
+		"act": _act(dt, p)
+		"rest":
+			_drift(dt)
+			mode_t -= dt
+			if mode_t <= 0.0:
+				mode = "move"
+				cd = float(d["cd"]) * (1.0 - 0.12 * (phase - 1)) * randf_range(0.8, 1.1) * (0.5 if (has_twist("enrage") and hp / max_hp < 0.3) else 1.0)
+				if has_twist("blink"):
+					_blink()
 	queue_redraw()
 
-func _grad(top: Color, bot: Color) -> void:
-	draw_polygon(PackedVector2Array([Vector2(0, 0), Vector2(Cfg.W, 0), Vector2(Cfg.W, Cfg.H), Vector2(0, Cfg.H)]),
-		PackedColorArray([top, top, bot, bot]))
+func _run_queue(dt: float) -> void:
+	if queue.is_empty():
+		return
+	var keep: Array = []
+	for q in queue:
+		q["t"] -= dt
+		if q["t"] <= 0.0:
+			q["f"].call()
+		else:
+			keep.append(q)
+	queue = keep
+
+func _later(delay: float, f: Callable) -> void:
+	queue.append({"t": delay, "f": f})
+
+func _check_phase() -> void:
+	var ratio := hp / max_hp
+	var np := 1
+	if int(d["phases"]) == 2:
+		np = 2 if ratio < 0.5 else 1
+	else:
+		np = 3 if ratio < 0.33 else (2 if ratio < 0.66 else 1)
+	if np > phase:
+		phase = np
+		queue.clear()
+		game.clear_hostile()
+		game.on_boss_phase(phase)
+		mode = "rest"
+		contact = false
+		mode_t = 1.1
+		flash = 1.0
+		minion_t = 0.8
+
+func _spawn_minion_wave() -> void:
+	var cap := 3 + int(tier * 6.0)
+	if game.minion_count() >= cap:
+		return
+	var pool: Array = Minion.pool(bool(d["hell"]))
+	var kinds: Array = [pool.pick_random(), pool.pick_random()]
+	var n := mini(2 + int(tier * 3.0) + (phase - 1), cap - game.minion_count())
+	game.sfx.play("roar", -10.0, 1.8)
+	for i in n:
+		var kind: String = kinds[i % 2]
+		var fl: bool = Minion.TYPES[kind]["fly"]
+		var left := (i % 2 == 0)
+		var pos := Vector2(70.0 if left else Cfg.W - 70.0, 70.0 if fl else Cfg.FLOOR - 20.0)
+		_later(0.01 + i * 0.35, func(): game.add_minion(kind, pos, tier))
+
+func _drift(dt: float) -> void:
+	if fly:
+		position.y += sin(t * 3.0) * 10.0 * dt
+	if mode == "rest" and not fly:
+		position.y = Cfg.FLOOR - size.y * 0.5
+
+func _move(dt: float, p) -> void:
+	var spd := float(d["speed"]) * (1.0 + 0.2 * (phase - 1)) * (1.35 if has_twist("fleet") else 1.0)
+	if fly:
+		var tx := clampf(p.position.x + sin(t * 0.7) * 300.0, 120.0, 1160.0)
+		var ty := 300.0 + sin(t * 1.3) * 45.0
+		position.x = move_toward(position.x, tx, spd * 1.3 * dt)
+		position.y = move_toward(position.y, ty, 140.0 * dt)
+	else:
+		var dx: float = p.position.x - position.x
+		if absf(dx) > 150.0:
+			position.x += signf(dx) * spd * dt
+		position.y = Cfg.FLOOR - size.y * 0.5
+	position.x = clampf(position.x, 80.0, Cfg.W - 80.0)
+	cd -= dt
+	if cd <= 0.0:
+		_choose()
+
+func _choose() -> void:
+	var pool: Array = (d["pool"] as Array).duplicate()
+	if phase >= 2:
+		pool.append_array(d["p2"])
+	if pool.size() > 1:
+		pool = pool.filter(func(a): return a != last_atk)
+	var a: String = pool.pick_random()
+	if sp_cd <= 0.0 and not prologue:
+		a = "special"
+		sp_cd = maxf(6.5, 13.0 - 5.0 * tier - 1.5 * (phase - 1)) * (0.55 if has_twist("rapid_special") else 1.0)
+		game.show_special(special_name())
+	last_atk = a
+	if fly and (a == "charge" or a == "leap"):
+		a = "dive"
+	elif (not fly) and a == "dive":
+		a = "charge"
+	if fly and a == "wave":
+		a = "rain"
+	atk = a
+	mode = "wind"
+	wind_total = float(WIND[a]) * (1.0 - 0.15 * (phase - 1)) * (0.7 if (has_twist("frenzy") and phase >= 2) else 1.0)
+	mode_t = wind_total
+	game.sfx.play("roar", -14.0, 1.6)
+
+func wind_ratio() -> float:
+	if mode != "wind":
+		return 0.0
+	return clampf(1.0 - mode_t / maxf(wind_total, 0.01), 0.0, 1.0)
+
+func _end_attack(rest: float = 0.6) -> void:
+	mode = "rest"
+	mode_t = rest
+	contact = false
+
+func _execute() -> void:
+	var p = game.player
+	match atk:
+		"fan": _fan()
+		"ring": _ring()
+		"rain": _rain(p)
+		"homing": _homing()
+		"wave": _wave()
+		"pillars": _pillars(p)
+		"judgment": _judgment()
+		"spears": _spears()
+		"special": _special(p)
+		"charge":
+			mode = "act"
+			mode_t = 1.6
+			act_dir = face
+			contact = true
+			game.sfx.play("roar", -6.0, 1.3)
+			return
+		"leap":
+			mode = "act"
+			contact = true
+			vel = Vector2(clampf((p.position.x - position.x) / 0.73, -850.0, 850.0), -880.0)
+			game.sfx.play("jump", -2.0, 0.5)
+			return
+		"dive":
+			mode = "act"
+			contact = true
+			dive_stage = 0
+			mode_t = 1.2
+			act_target = p.center()
+			game.sfx.play("roar", -6.0, 1.5)
+			return
+	_end_attack(0.55 + 0.05 * (phase - 1))
+
+func _dmg() -> int:
+	return dmg
+
+func _bspeed() -> float:
+	return float(d["bolt_speed"]) * (1.0 + 0.1 * (phase - 1))
+
+func _origin() -> Vector2:
+	return position + Vector2(face * size.x * 0.25, -size.y * 0.1)
+
+# ---------------------------------------------------------------- attacks
+func _fan() -> void:
+	var n := int((3 + int(tier * 6.0) + (phase - 1)) * volley)
+	var vols := 1 + (1 if phase >= 2 else 0) + (1 if (phase == 3 and bool(d["final"])) else 0)
+	for v in vols:
+		_later(0.01 + v * 0.4, func(): _fan_once(n))
+
+func _fan_once(n: int) -> void:
+	var o := _origin()
+	var base: float = (game.player.center() - o).angle()
+	var spread := deg_to_rad(11.0)
+	for i in n:
+		var a := base + (float(i) - float(n - 1) * 0.5) * spread
+		Hazard.bolt(game, o, Vector2.from_angle(a) * _bspeed(), 12.0, _dmg(), bolt_col)
+	game.sfx.play("shoot", -8.0)
+
+func _ring() -> void:
+	var n := int((10 + int(tier * 10.0)) * volley)
+	var vols := 1 + (1 if phase >= 2 else 0)
+	for v in vols:
+		_later(0.01 + v * 0.55, func(): _ring_once(n, v))
+
+func _ring_once(n: int, v: int) -> void:
+	var off := (0.5 if v % 2 == 1 else 0.0) * TAU / float(n)
+	for i in n:
+		var a := off + TAU * float(i) / float(n)
+		Hazard.bolt(game, position, Vector2.from_angle(a) * _bspeed() * 0.78, 12.0, _dmg(), bolt_col)
+	game.fx.ring(position, 120.0, bolt_col, 0.4)
+	game.sfx.play("shoot", -6.0, 0.7)
+
+func _rain(p) -> void:
+	var n := 8 + int(tier * 8.0) + 2 * (phase - 1)
+	for i in n:
+		_later(0.01 + i * 0.14, func():
+			var x: float = clampf(game.player.position.x + randf_range(-110.0, 110.0), 50.0, Cfg.W - 50.0) if i % 3 == 0 else randf_range(60.0, Cfg.W - 60.0)
+			Hazard.bolt(game, Vector2(x, -20.0), Vector2(0.0, _bspeed() * 0.9), 14.0, _dmg(), bolt_col, {"grav": 650.0, "warn": true}))
+
+func _homing() -> void:
+	var n := 1 + (1 if phase >= 2 else 0) + (1 if phase == 3 else 0)
+	for i in n:
+		_later(0.01 + i * 0.5, func():
+			var ang: float = (game.player.center() - _origin()).angle() + randf_range(-0.5, 0.5)
+			Hazard.bolt(game, _origin(), Vector2.from_angle(ang) * (190.0 + 80.0 * tier), 20.0, _dmg(), bolt_col, {"turn": 1.5, "life": 6.0, "breakable": true})
+			game.sfx.play("shoot", -8.0, 0.6))
+
+func _wave() -> void:
+	var h := 46.0 + 10.0 * (phase - 1)
+	var spd := 340.0 + 180.0 * tier
+	var rounds := 1 + (1 if phase >= 2 else 0)
+	for r_i in rounds:
+		_later(0.01 + r_i * 0.8, func():
+			for s in [-1, 1]:
+				Hazard.wave(game, position.x + s * 40.0, s * spd, h, _dmg(), bolt_col)
+			game.sfx.play("boom", -8.0, 1.2)
+			game.shake_add(5.0))
+
+func _pillars(p) -> void:
+	var n := 2 + int(tier * 3.0) + (phase - 1)
+	for i in n:
+		var x: float = p.position.x if i == 0 else p.position.x + (float(i) - float(n) * 0.5) * randf_range(120.0, 190.0)
+		x = clampf(x, 50.0, Cfg.W - 50.0)
+		_later(0.01 + i * 0.12, func():
+			Hazard.pillar(game, x, 80.0, 0.95 - 0.1 * tier, 0.35, _dmg(), bolt_col, String(d["style"])))
+
+func _judgment() -> void:
+	var cols := 13
+	var gap := randi_range(2, cols - 3)
+	for i in cols:
+		if i == gap or i == gap + 1:
+			continue
+		Hazard.pillar(game, 10.0 + i * 100.0, 100.0, 1.35, 0.5, _dmg(), bolt_col, String(d["style"]))
+	game.sfx.play("roar", -8.0, 0.8)
+
+func _spears() -> void:
+	var n := 5 + int(tier * 4.0) + (phase - 1)
+	for i in n:
+		_later(0.01 + i * 0.22, func():
+			Hazard.pillar(game, clampf(game.player.position.x + randf_range(-50.0, 50.0), 40.0, Cfg.W - 40.0), 26.0, 0.55, 0.22, _dmg(), Color(1.0, 0.92, 0.5), "spear"))
+
+
+# ---------------------------------------------------------------- special abilities
+func _sid() -> String:
+	return arch if fam == "archangel" else fam
+
+const SPECIALS := {
+	"imp": "SWARM CALL", "wraith": "VEILSTEP", "hound": "HELLHOWL", "slime": "MOLTEN SPLIT",
+	"duke": "GATE OF EMBERS", "torturer": "IRON CHAINS", "golem": "EARTHSHATTER", "seraph": "WHEEL OF FIRE",
+	"cherub": "CHOIR SUMMON", "knight": "SHIELD WALL", "pillar": "COLLAPSE", "ophanim": "ALL-SEEING",
+	"michael": "BLADE OF HEAVEN", "gabriel": "TRUMPET OF DOOM", "uriel": "SOLAR FLARE", "raphael": "MENDING LIGHT",
+	"metatron": "CUBE OF TRUTH", "raguel": "SCALES OF JUDGMENT", "sariel": "ECLIPSE", "satan": "HELLSTORM", "god": "DIVINE WRATH",
+}
+
+func special_name() -> String:
+	return String(SPECIALS.get(_sid(), "WRATH"))
+
+func _spawn_adds(kind: String, n: int) -> void:
+	if game.minion_count() >= 9:
+		return
+	for i in n:
+		var off := Vector2(randf_range(-120.0, 120.0), randf_range(-60.0, 20.0))
+		var fl: bool = Minion.TYPES[kind]["fly"]
+		var pos := position + off
+		if not fl:
+			pos.y = Cfg.FLOOR - 20.0
+		pos.x = clampf(pos.x, 60.0, Cfg.W - 60.0)
+		_later(0.05 + i * 0.25, func(): game.add_minion(kind, pos, tier))
+
+func _sweep_pillars(from_left: bool, n: int, gap: float) -> void:
+	for i in n:
+		var x := 60.0 + float(i if from_left else n - 1 - i) * gap
+		_later(0.01 + i * 0.11, func():
+			Hazard.pillar(game, clampf(x, 40.0, Cfg.W - 40.0), 70.0, 0.85, 0.35, _dmg(), bolt_col, String(d["style"])))
+
+func _special(p) -> void:
+	var ph := phase
+	game.shake_add(6.0)
+	game.sfx.play("roar", -4.0, 0.7)
+	match _sid():
+		"imp":
+			_spawn_adds("ember_imp", 3 + ph)
+			_ring_once(8 + ph * 2, 0)
+		"wraith":
+			var tx := clampf(p.position.x + (260.0 if p.position.x < Cfg.W * 0.5 else -260.0), 120.0, Cfg.W - 120.0)
+			game.fx.burst(position, 16, acc, 220.0, 5.0, 0.5)
+			position.x = tx
+			game.fx.burst(position, 16, acc, 220.0, 5.0, 0.5)
+			for k in 2:
+				_later(0.2 + k * 0.5, func(): _ring_once(12 + 4 * ph, k))
+		"hound":
+			for k in 2 + ph:
+				_later(0.01 + k * 0.55, func():
+					for s in [-1, 1]:
+						Hazard.wave(game, position.x + s * 40.0, s * (420.0 + 70.0 * k), 50.0, _dmg(), bolt_col)
+					game.shake_add(8.0)
+					game.sfx.play("boom", -6.0, 0.8))
+		"slime":
+			_spawn_adds("magma_blob", 3 + ph)
+			_wave()
+		"duke":
+			_sweep_pillars(p.position.x > Cfg.W * 0.5, 12, 100.0)
+			if ph >= 2:
+				_later(0.9, func(): _sweep_pillars(p.position.x <= Cfg.W * 0.5, 12, 100.0))
+		"torturer":
+			for k in 9:
+				_later(0.05 + k * 0.07, func():
+					var dir := signf(position.x - game.player.position.x)
+					game.player.position.x = clampf(game.player.position.x + dir * 26.0, 30.0, Cfg.W - 30.0)
+					game.fx.burst(game.player.center(), 2, Color(0.6, 0.6, 0.65), 100.0, 3.0, 0.25))
+			_later(0.8, func(): _wave())
+			_later(1.3, func(): _pillars(game.player))
+		"golem":
+			for s in [-1, 1]:
+				Hazard.wave(game, position.x + s * 60.0, s * 300.0, 60.0, _dmg(), bolt_col)
+			game.shake_add(16.0)
+			_rain(p)
+			_rain(p)
+		"seraph":
+			var arms := 3
+			var steps := 16
+			for k in steps:
+				_later(0.01 + k * 0.12, func():
+					for a in arms:
+						var ang := float(k) * 0.35 + TAU * float(a) / float(arms)
+						Hazard.bolt(game, position, Vector2.from_angle(ang) * _bspeed() * 0.75, 11.0, _dmg(), bolt_col))
+		"cherub":
+			_spawn_adds("halo_sprite", 3)
+			_fan()
+		"knight":
+			guard_t = 3.5
+			game.fx.ring(position, 140.0, Color(0.8, 0.85, 1.0), 0.6)
+			_later(1.5, func(): _fan_once(7 + ph))
+			_later(2.6, func(): _wave())
+		"pillar":
+			for k in 9:
+				_later(0.01 + k * 0.16, func():
+					Hazard.pillar(game, randf_range(50.0, Cfg.W - 50.0), 70.0, 0.9, 0.4, _dmg(), bolt_col, String(d["style"])))
+			_later(1.6, func(): _judgment())
+		"ophanim":
+			for k in 8:
+				_later(0.01 + k * 0.14, func():
+					var ang := TAU * float(k) / 8.0 + t
+					Hazard.bolt(game, position + Vector2.from_angle(ang) * 60.0, Vector2.from_angle(ang) * 170.0, 15.0, _dmg(), bolt_col, {"turn": 1.6, "life": 6.0, "breakable": true}))
+		"michael":
+			for k in 14 + 2 * ph:
+				_later(0.01 + k * 0.13, func():
+					Hazard.pillar(game, clampf(game.player.position.x + randf_range(-160.0, 160.0), 40.0, Cfg.W - 40.0), 26.0, 0.5, 0.22, _dmg(), Color(1.0, 0.92, 0.5), "spear"))
+		"gabriel":
+			for k in 3:
+				_later(0.01 + k * 0.5, func():
+					for s in [-1, 1]:
+						Hazard.wave(game, position.x + s * 40.0, s * (380.0 + 60.0 * k), 48.0, _dmg(), bolt_col)
+					game.shake_add(6.0)
+					game.sfx.play("boom", -8.0, 1.3))
+		"uriel":
+			for k in 6:
+				_later(0.01 + k * 0.2, func():
+					Hazard.pillar(game, 100.0 + k * 200.0, 120.0, 1.2, 0.6, _dmg(), bolt_col, "fire"))
+		"raphael":
+			if sp_heal_cd <= 0.0:
+				sp_heal_cd = 22.0
+				hp = minf(max_hp, hp + max_hp * 0.05)
+				game.fx.popup(position + Vector2(0, -size.y * 0.5 - 10.0), "HEAL", Color(0.5, 1.0, 0.6))
+			game.fx.ring(position, 160.0, Color(0.5, 1.0, 0.6), 0.6)
+			_ring_once(14, 0)
+			_later(0.6, func(): _ring_once(14, 1))
+		"metatron":
+			_ring_once(16, 0)
+			_later(0.5, func(): _homing())
+			_later(1.0, func(): _homing())
+		"raguel":
+			_judgment()
+			_later(1.0, func(): _judgment())
+		"sariel":
+			game.dark_t = 3.0
+			for k in 14:
+				_later(0.01 + k * 0.12, func():
+					Hazard.bolt(game, Vector2(randf_range(60.0, Cfg.W - 60.0), -20.0), Vector2(0.0, _bspeed()), 14.0, _dmg(), bolt_col, {"grav": 650.0}))
+		"satan":
+			for k in 16 + 4 * ph:
+				_later(0.01 + k * 0.11, func():
+					Hazard.bolt(game, Vector2(randf_range(60.0, Cfg.W - 60.0), -20.0), Vector2(randf_range(-80.0, 80.0), _bspeed() * 0.9), 16.0, _dmg(), Color(1.0, 0.4, 0.1), {"grav": 700.0, "warn": true}))
+			_later(1.0, func(): _wave())
+			_later(1.8, func(): _pillars(game.player))
+		"god":
+			_judgment()
+			_later(0.9, func(): _spears())
+			_later(1.6, func(): _ring_once(18 + 4 * ph, 0))
+		_:
+			_ring_once(12, 0)
+
+# ---------------------------------------------------------------- movement attacks
+func _act(dt: float, p) -> void:
+	match atk:
+		"charge":
+			var spd := (520.0 + 250.0 * tier) * (1.0 + 0.2 * (phase - 1))
+			position.x += act_dir * spd * dt
+			mode_t -= dt
+			if position.x < 90.0 or position.x > Cfg.W - 90.0:
+				position.x = clampf(position.x, 90.0, Cfg.W - 90.0)
+				game.shake_add(9.0)
+				game.sfx.play("boom", -6.0)
+				game.fx.burst(Vector2(position.x, Cfg.FLOOR), 14, acc, 260.0, 5.0, 0.5)
+				_end_attack(1.0)
+				return
+			if mode_t <= 0.0:
+				_end_attack(0.9)
+		"leap":
+			vel.y += 2400.0 * dt
+			position += vel * dt
+			position.x = clampf(position.x, 80.0, Cfg.W - 80.0)
+			if vel.y > 0.0 and position.y >= Cfg.FLOOR - size.y * 0.5:
+				position.y = Cfg.FLOOR - size.y * 0.5
+				game.shake_add(12.0)
+				game.sfx.play("boom")
+				game.fx.burst(Vector2(position.x, Cfg.FLOOR), 20, acc, 300.0, 6.0, 0.6)
+				for s in [-1, 1]:
+					Hazard.wave(game, position.x + s * 50.0, s * (300.0 + 150.0 * tier), 42.0, _dmg(), bolt_col)
+				_end_attack(0.8)
+		"dive":
+			mode_t -= dt
+			if dive_stage == 0:
+				var to := act_target - position
+				var step := (760.0 + 200.0 * tier) * dt
+				if to.length() <= step or mode_t <= 0.0:
+					dive_stage = 1
+					game.fx.burst(position, 12, acc, 240.0, 5.0, 0.4)
+				else:
+					position += to.normalized() * step
+			else:
+				position.y = move_toward(position.y, 320.0, 520.0 * dt)
+				if position.y <= 330.0:
+					_end_attack(0.6)
+	if contact and hurt_rect().intersects(p.hurt_rect()):
+		p.take_hit(_dmg(), position.x)
+
+# ---------------------------------------------------------------- prologue God
+func _tick_prologue(dt: float) -> void:
+	_run_queue(dt)
+	if frozen:
+		return
+	var p = game.player
+	p_spear_t -= dt
+	if p_spear_t <= 0.0:
+		p_spear_t = 1.5
+		Hazard.pillar(game, p.position.x, 26.0, 0.8, 0.22, 1, Color(1.0, 0.92, 0.5), "spear")
+		Hazard.pillar(game, clampf(p.position.x + randf_range(-240.0, 240.0), 40.0, 900.0), 26.0, 0.8, 0.22, 1, Color(1.0, 0.92, 0.5), "spear")
+	p_wave_t -= dt
+	if p_wave_t <= 0.0:
+		p_wave_t = 4.6
+		Hazard.wave(game, position.x - 100.0, -330.0, 46.0, 1, Color(1.0, 0.88, 0.4))
+		game.sfx.play("boom", -8.0)
+		game.shake_add(5.0)
+
+# ---------------------------------------------------------------- drawing
+func _c(base: Color) -> Color:
+	return base.lerp(Color.WHITE, flash * 0.7)
+
+func _poly(cx: float, cy: float, rx: float, ry: float, n: int = 20, wob: float = 0.0, ph: float = 0.0) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		var k := 1.0 + wob * sin(a * 3.0 + ph)
+		pts.append(Vector2(cx + cos(a) * rx * k, cy + sin(a) * ry * k))
+	return pts
+
+func _mirror(pts: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in range(pts.size() - 1, -1, -1):
+		out.append(Vector2(-pts[i].x, pts[i].y))
+	return out
+
+func _eyes(y: float, gap: float, r: float, c: Color) -> void:
+	draw_circle(Vector2(-gap, y), r * 1.7, Color(c.r, c.g, c.b, 0.3))
+	draw_circle(Vector2(gap, y), r * 1.7, Color(c.r, c.g, c.b, 0.3))
+	draw_circle(Vector2(-gap, y), r, c)
+	draw_circle(Vector2(gap, y), r, c)
+	draw_circle(Vector2(-gap, y), r * 0.4, Color.BLACK)
+	draw_circle(Vector2(gap, y), r * 0.4, Color.BLACK)
 
 func _draw() -> void:
-	match theme:
-		"hell", "abyss": _draw_hell()
-		"heaven", "storm": _draw_heaven()
-		"sanctuary": _draw_sanctuary()
-		"throne": _draw_throne()
-		_: _draw_title()
-	if theme in ["heaven", "storm", "sanctuary", "throne"]:
-		var dk := 0.62 if theme != "throne" else 0.5
-		draw_rect(Rect2(0, 0, Cfg.W, Cfg.H), Color(0.05, 0.04, 0.1, dk))
-	_draw_floor()
-	for pr in platforms:
-		_draw_platform(pr)
-	if shrine:
-		_draw_shrine()
-	_draw_motes()
-	_draw_vignette()
+	var wob := Vector2.ZERO
+	if dying:
+		wob = Vector2(randf_range(-6, 6), randf_range(-4, 4))
+	var bob := sin(t * 2.2) * 4.0 if fly or prologue else 0.0
+	# art is authored facing LEFT; flip when the player is on the right
+	draw_set_transform(wob + Vector2(0, bob), 0.0, Vector2(-1.0 if face > 0 else 1.0, 1.0))
+	var wr := wind_ratio()
+	if wr > 0.0:
+		var gr := maxf(size.x, size.y) * 0.62
+		draw_circle(Vector2.ZERO, gr * (0.6 + 0.5 * wr), Color(acc.r, acc.g, acc.b, 0.22 * wr))
+	if contact:
+		draw_circle(Vector2.ZERO, maxf(size.x, size.y) * 0.58, Color(acc.r, acc.g, acc.b, 0.15))
+	BossArt.draw(self)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if phase > 1 and not dying:
+		draw_arc(Vector2.ZERO, maxf(size.x, size.y) * 0.62, 0.0, TAU, 40, Color(acc.r, acc.g, acc.b, 0.25 + 0.15 * sin(t * 6.0)), 3.0)
 
-# ---------------------------------------------------------------- themes
-func _draw_hell() -> void:
-	var bot := Color(0.34, 0.08, 0.03).lerp(Color(0.14, 0.03, 0.05), depth)
-	if theme == "abyss":
-		bot = Color(0.42, 0.04, 0.05)
-	_grad(Color(bot.r * 0.28, bot.g * 0.28, bot.b * 0.28), bot)
-	# distant cliffs
-	var far := PackedVector2Array([Vector2(0, 560)])
-	var x := 0.0
-	while x <= Cfg.W + 60.0:
-		far.append(Vector2(x, 400.0 + 90.0 * sin(x * 0.011 + depth * 5.0) + 40.0 * sin(x * 0.037)))
-		x += 60.0
-	far.append(Vector2(Cfg.W, 620)); far.append(Vector2(0, 620))
-	draw_colored_polygon(far, Color(0.05, 0.02, 0.03, 0.85))
-	# magma glow along the horizon
-	draw_polygon(PackedVector2Array([Vector2(0, 470), Vector2(Cfg.W, 470), Vector2(Cfg.W, 620), Vector2(0, 620)]),
-		PackedColorArray([Color(1, 0.35, 0.05, 0.0), Color(1, 0.35, 0.05, 0.0), Color(1, 0.4, 0.08, 0.32), Color(1, 0.4, 0.08, 0.32)]))
-	# stalactites
-	for d in deco:
-		var tri := PackedVector2Array([Vector2(d["x"] - d["a"] * 0.5, 0), Vector2(d["x"] + d["a"] * 0.5, 0), Vector2(d["x"] + (d["c"] - 0.5) * 20.0, d["b"])])
-		draw_colored_polygon(tri, Color(0.04, 0.02, 0.03))
-	# hanging iron cages
-	for i in 4:
-		var d: Dictionary = deco[i]
-		var cx: float = 120.0 + i * 340.0 + d["c"] * 80.0
-		var sway := sin(t * 0.8 + i) * 6.0
-		var top: float = 60.0 + d["c"] * 60.0
-		draw_line(Vector2(cx, 0), Vector2(cx + sway, top), Color(0.15, 0.1, 0.1), 3.0)
-		var rc := Rect2(cx + sway - 26, top, 52, 70)
-		draw_rect(rc, Color(0.1, 0.07, 0.07, 0.8), false, 3.0)
-		for k in 4:
-			draw_line(Vector2(rc.position.x + 10 + k * 11, rc.position.y), Vector2(rc.position.x + 10 + k * 11, rc.end.y), Color(0.16, 0.1, 0.09), 2.0)
-		draw_arc(Vector2(cx + sway, top), 26, PI, TAU, 10, Color(0.16, 0.1, 0.09), 3.0)
-	# lava river
-	var lava := PackedVector2Array()
-	lava.append(Vector2(0, Cfg.H))
-	var lx := 0.0
-	while lx <= Cfg.W + 20.0:
-		lava.append(Vector2(lx, 690.0 + 5.0 * sin(lx * 0.03 + t * 2.0)))
-		lx += 20.0
-	lava.append(Vector2(Cfg.W, Cfg.H))
-	draw_colored_polygon(lava, Color(1.0, 0.45, 0.08))
-
-func _draw_heaven() -> void:
-	var is_storm := theme == "storm"
-	var top: Color = Color(0.2, 0.24, 0.38) if is_storm else Color(0.45, 0.65, 0.95)
-	var bot: Color = Color(0.62, 0.66, 0.78) if is_storm else Color(0.95, 0.96, 1.0)
-	_grad(top, bot)
-	# god-rays
-	for i in 5:
-		var rx := 150.0 + i * 250.0
-		draw_colored_polygon(PackedVector2Array([Vector2(rx, 0), Vector2(rx + 60, 0), Vector2(rx + 220 + sin(t * 0.3 + i) * 20.0, Cfg.FLOOR), Vector2(rx + 100, Cfg.FLOOR)]),
-			Color(1, 0.95, 0.7, 0.07))
-	# floating golden pillars
-	for i in 6:
-		var d: Dictionary = deco[i]
-		var px: float = 90.0 + i * 220.0 + d["c"] * 60.0
-		var py: float = 120.0 + d["c"] * 180.0 + sin(t * 0.5 + i) * 12.0
-		var ph: float = 150.0 + d["a"]
-		draw_rect(Rect2(px, py, 38, ph), Color(0.95, 0.82, 0.42, 0.75))
-		draw_rect(Rect2(px - 8, py - 10, 54, 12), Color(1.0, 0.9, 0.55, 0.85))
-		draw_rect(Rect2(px - 8, py + ph, 54, 10), Color(1.0, 0.9, 0.55, 0.85))
-		for k in 3:
-			draw_line(Vector2(px + 9 + k * 10, py), Vector2(px + 9 + k * 10, py + ph), Color(0.8, 0.65, 0.3, 0.6), 2.0)
-	# clouds
-	for i in 14:
-		var d: Dictionary = deco[i]
-		var cx := fmod(d["x"] + t * (6.0 + d["c"] * 14.0), Cfg.W + 300.0) - 150.0
-		var cy: float = 380.0 + d["c"] * 260.0
-		var cc := Color(1, 1, 1, 0.55) if not is_storm else Color(0.55, 0.58, 0.7, 0.6)
-		for k in 4:
-			draw_circle(Vector2(cx + k * 38.0, cy + sin(k * 2.0) * 10.0), 40.0 + k % 2 * 12.0, cc)
-	if lightning > 0.0:
-		draw_rect(Rect2(0, 0, Cfg.W, Cfg.H), Color(1, 1, 0.9, 0.35 * lightning))
-
-func _draw_sanctuary() -> void:
-	_grad(Color(0.1, 0.08, 0.2), Color(0.42, 0.34, 0.5))
-	# stained-glass windows
-	var cols := [Color(0.9, 0.3, 0.3), Color(0.95, 0.8, 0.3), Color(0.3, 0.6, 0.95), Color(0.5, 0.85, 0.5), Color(0.75, 0.45, 0.9)]
-	for i in 5:
-		var wx := 100.0 + i * 250.0
-		var wy := 90.0
-		var ww := 110.0
-		var wh := 300.0
-		draw_rect(Rect2(wx, wy + 55, ww, wh - 55), Color(0.05, 0.04, 0.1))
-		draw_circle(Vector2(wx + ww * 0.5, wy + 55), ww * 0.5, Color(0.05, 0.04, 0.1))
-		var gc: Color = cols[i % cols.size()]
-		draw_rect(Rect2(wx + 8, wy + 55, ww - 16, wh - 63), Color(gc.r, gc.g, gc.b, 0.55 + 0.1 * sin(t + i)))
-		draw_circle(Vector2(wx + ww * 0.5, wy + 55), ww * 0.5 - 8.0, Color(gc.r, gc.g, gc.b, 0.6))
-		for k in 3:
-			draw_line(Vector2(wx + 8, wy + 100 + k * 70), Vector2(wx + ww - 8, wy + 100 + k * 70), Color(0.05, 0.04, 0.1), 3.0)
-		draw_line(Vector2(wx + ww * 0.5, wy + 10), Vector2(wx + ww * 0.5, wy + wh), Color(0.05, 0.04, 0.1), 3.0)
-		draw_colored_polygon(PackedVector2Array([Vector2(wx + 10, wy + wh), Vector2(wx + ww - 10, wy + wh), Vector2(wx + ww + 140, Cfg.FLOOR), Vector2(wx + 60, Cfg.FLOOR)]),
-			Color(gc.r, gc.g, gc.b, 0.07))
-	for i in 3:
-		var cx := 40.0 + i * 600.0
-		draw_rect(Rect2(cx, 0, 40, Cfg.FLOOR), Color(0.2, 0.17, 0.3, 0.8))
-
-func _draw_throne() -> void:
-	_grad(Color(1.0, 0.97, 0.8), Color(1.0, 0.86, 0.45))
-	# radiant rays
-	for i in 14:
-		var a := t * 0.06 + i * TAU / 14.0
-		var c := Vector2(Cfg.W * 0.5, 120.0)
-		draw_colored_polygon(PackedVector2Array([c, c + Vector2.from_angle(a - 0.07) * 1300.0, c + Vector2.from_angle(a + 0.07) * 1300.0]),
-			Color(1, 1, 0.9, 0.18))
-	draw_circle(Vector2(Cfg.W * 0.5, 120), 150, Color(1, 1, 0.92, 0.55))
-	draw_circle(Vector2(Cfg.W * 0.5, 120), 90, Color(1, 1, 1, 0.8))
-	# columns
-	for i in 6:
-		var cx := 40.0 + i * 235.0
-		draw_rect(Rect2(cx, 80, 54, Cfg.FLOOR - 80), Color(0.98, 0.93, 0.78, 0.9))
-		draw_rect(Rect2(cx - 10, 70, 74, 20), Color(1, 0.88, 0.5))
-		draw_rect(Rect2(cx - 10, Cfg.FLOOR - 24, 74, 24), Color(1, 0.88, 0.5))
-		for k in 3:
-			draw_line(Vector2(cx + 12 + k * 14, 90), Vector2(cx + 12 + k * 14, Cfg.FLOOR - 24), Color(0.85, 0.75, 0.5, 0.7), 2.0)
-	# sigil on the floor
-	draw_arc(Vector2(Cfg.W * 0.5, Cfg.FLOOR), 260.0, PI, TAU, 40, Color(1, 0.8, 0.3, 0.7), 3.0)
-
-func _draw_title() -> void:
-	_grad(Color(0.04, 0.03, 0.05), Color(0.2, 0.13, 0.08))
-	for i in 18:
-		var d: Dictionary = deco[i]
-		var sx: float = d["x"]
-		var pts := PackedVector2Array()
-		for k in 8:
-			pts.append(Vector2(sx + sin(k * 0.8 + d["c"] * 6.0) * 40.0 * d["c"], Cfg.FLOOR + k * 14.0 - k * k * 14.0 * (0.4 + d["c"])))
-		draw_polyline(pts, Color(0.35, 0.22, 0.12, 0.7), 2.0 + d["c"] * 4.0)
-
-# ---------------------------------------------------------------- ground
-func _draw_floor() -> void:
-	var holy := theme in ["heaven", "storm", "sanctuary", "throne"]
-	if theme == "title":
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, Cfg.H - Cfg.FLOOR), Color(0.16, 0.1, 0.06))
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, 5), Color(0.3, 0.2, 0.1))
-		return
-	if holy:
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, Cfg.H - Cfg.FLOOR), Color(0.96, 0.93, 0.86))
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, 6), Color(1.0, 0.82, 0.35))
-		for i in 11:
-			draw_line(Vector2(i * 128.0, Cfg.FLOOR + 6), Vector2(i * 128.0 - 40.0, Cfg.H), Color(0.8, 0.74, 0.6, 0.6), 2.0)
-	else:
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, Cfg.H - Cfg.FLOOR), Color(0.07, 0.05, 0.07))
-		draw_rect(Rect2(0, Cfg.FLOOR, Cfg.W, 4), Color(1.0, 0.4, 0.1, 0.8))
-		for i in 9:
-			var d: Dictionary = deco[i]
-			var x0: float = d["x"]
-			draw_polyline(PackedVector2Array([Vector2(x0, Cfg.FLOOR + 4), Vector2(x0 + 18, Cfg.FLOOR + 30), Vector2(x0 - 6, Cfg.FLOOR + 52), Vector2(x0 + 20, Cfg.FLOOR + 80)]),
-				Color(1.0, 0.4, 0.1, 0.5), 2.0)
-
-func _draw_platform(pr: Rect2) -> void:
-	var holy := theme in ["heaven", "storm", "sanctuary", "throne"]
-	if holy:
-		draw_rect(pr, Color(0.98, 0.95, 0.85))
-		draw_rect(Rect2(pr.position.x, pr.position.y, pr.size.x, 4), Color(1.0, 0.82, 0.35))
-		draw_rect(Rect2(pr.position.x + 8, pr.end.y, pr.size.x - 16, 8), Color(1, 1, 1, 0.5))
-	else:
-		draw_rect(pr, Color(0.12, 0.09, 0.1))
-		draw_rect(Rect2(pr.position.x, pr.position.y, pr.size.x, 3), Color(0.55, 0.3, 0.15))
-		for k in 5:
-			draw_circle(Vector2(pr.position.x + 18 + k * (pr.size.x - 36) / 4.0, pr.position.y + 8), 2.0, Color(0.5, 0.25, 0.12))
-
-func _draw_shrine() -> void:
-	var cx := Cfg.W * 0.5
-	var pts := PackedVector2Array()
-	for i in 21:
-		var a := PI + PI * float(i) / 20.0
-		pts.append(Vector2(cx + cos(a) * 150.0, Cfg.FLOOR + sin(a) * 34.0))
-	draw_colored_polygon(pts, Color(0.22, 0.14, 0.08))
-	var glow := 0.5 + 0.5 * sin(t * 2.0)
-	draw_circle(Vector2(cx, Cfg.FLOOR - 8), 120.0, Color(0.5, 0.9, 0.3, 0.06 + 0.05 * glow))
-	for k in 7:
-		var sx := cx - 100.0 + k * 33.0
-		var sh := 16.0 + 10.0 * sin(t * 1.6 + k)
-		draw_line(Vector2(sx, Cfg.FLOOR - 4), Vector2(sx + sin(k) * 6.0, Cfg.FLOOR - 4 - sh), Color(0.45, 0.85, 0.3), 3.0)
-		draw_circle(Vector2(sx + sin(k) * 6.0, Cfg.FLOOR - 4 - sh), 4.0, Color(0.7, 1.0, 0.45))
-
-func _draw_motes() -> void:
-	for m in motes:
-		var c := Color(1, 1, 1, 0.3)
-		match theme:
-			"hell", "abyss":
-				c = Color(1.0, 0.5, 0.15, 0.7) if m["s"] > 0.55 else Color(0.5, 0.45, 0.45, 0.4)
-			"title":
-				c = Color(0.7, 0.9, 0.4, 0.35)
-			"throne":
-				c = Color(1, 0.9, 0.5, 0.6)
-			"sanctuary":
-				c = Color(1, 0.9, 0.7, 0.35)
-			_:
-				c = Color(1, 0.97, 0.8, 0.5)
-		draw_circle(m["p"], m["z"] * 0.7, c)
-
-func _draw_vignette() -> void:
-	var edge := Color(0, 0, 0, 0.6)
-	var clear := Color(0, 0, 0, 0.0)
-	var w := float(Cfg.W)
-	var h := float(Cfg.H)
-	var m := 220.0
-	draw_polygon(PackedVector2Array([Vector2(0, 0), Vector2(m, 0), Vector2(m, h), Vector2(0, h)]), PackedColorArray([edge, clear, clear, edge]))
-	draw_polygon(PackedVector2Array([Vector2(w - m, 0), Vector2(w, 0), Vector2(w, h), Vector2(w - m, h)]), PackedColorArray([clear, edge, edge, clear]))
-	draw_polygon(PackedVector2Array([Vector2(0, 0), Vector2(w, 0), Vector2(w, 140), Vector2(0, 140)]), PackedColorArray([edge, edge, clear, clear]))
+func _blink() -> void:
+	var tx := clampf(game.player.position.x + (randf_range(220.0, 420.0) * (1.0 if randf() < 0.5 else -1.0)), 100.0, Cfg.W - 100.0)
+	game.fx.burst(position, 14, acc, 220.0, 5.0, 0.4)
+	position.x = tx
+	game.fx.burst(position, 14, acc, 220.0, 5.0, 0.4)
