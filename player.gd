@@ -4,7 +4,7 @@ extends Node2D
 
 const GRAV := 2350.0
 const MOVE := 345.0
-const JUMP_V := -850.0
+const JUMP_V := -1050.0
 const DJUMP_V := -1050.0
 const ROLL_T := 0.38
 const ROLL_SPEED := 560.0
