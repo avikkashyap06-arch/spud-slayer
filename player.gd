@@ -20,14 +20,14 @@ var game
 var vel := Vector2.ZERO
 var on_ground := false
 var facing := 1
-var max_hp := 1
-var hp := 1
-var max_stamina := 100.0
-var stamina := 100.0
+var max_hp := 3
+var hp := 3
+var max_stamina := 120.0
+var stamina := 120.0
 var stam_delay := 0.0
 var max_energy := 100.0
 var energy := 0.0
-var damage := 10.0
+var damage := 16.0
 var air_jumps_used := 0
 var has_wings := false
 var roll_t := 0.0
@@ -72,9 +72,9 @@ func attack_rect() -> Rect2:
 	return Rect2(x, position.y - 84, 90, 84)
 
 func apply_upgrades() -> void:
-	max_hp = 1 + game.hp_lvl
-	max_stamina = 100.0 + 10.0 * game.sta_lvl
-	damage = 10.0 + 3.0 * game.atk_lvl
+	max_hp = 3 + game.hp_lvl
+	max_stamina = 120.0 + 10.0 * game.sta_lvl
+	damage = 16.0 + 4.0 * game.atk_lvl
 	has_wings = game.wings
 
 func full_heal() -> void:
@@ -202,7 +202,6 @@ func _actions(dir: float) -> void:
 		for i in 4:
 			if Input.is_action_just_pressed("rune%d" % (i + 1)):
 				cast_rune(i)
-
 func _roll(dir: float) -> void:
 	if roll_t > 0.0 or dash_t > 0.0:
 		return
@@ -215,7 +214,7 @@ func _roll(dir: float) -> void:
 		stam_delay = 0.55
 		game.sfx.play("roll", -4.0)
 		game.fx.dust(position, 8)
-	elif not on_ground and has_wings and not air_dashed and stamina >= DASH_COST:
+	elif not on_ground and not air_dashed and stamina >= DASH_COST:
 		dash_t = DASH_T
 		roll_dir = d
 		facing = d
@@ -346,21 +345,17 @@ func _draw() -> void:
 	if roll_t > 0.0:
 		rot = (1.0 - roll_t / ROLL_T) * TAU * roll_dir
 	draw_set_transform(Vector2(0, -28.0 * sc.y), rot, Vector2(sc.x * facing, sc.y))
-	# ember wings
 	if has_wings:
 		var fl := sin(anim_t * 18.0) * 6.0
 		var wing := PackedVector2Array([Vector2(-14, -8), Vector2(-52, -34 + fl), Vector2(-40, -6), Vector2(-56, 10 + fl), Vector2(-14, 8)])
 		draw_colored_polygon(wing, Color(1.0, 0.4, 0.08, 0.75))
-	# boots
 	Art.shape(self, Art.P([-18, 20, -4, 20, -2, 30, -20, 30]), Color(0.16, 0.11, 0.08), 0.0, 2.0)
 	Art.shape(self, Art.P([4, 20, 18, 20, 22, 30, 4, 30]), Color(0.16, 0.11, 0.08), 0.0, 2.0)
-	# pixel-art body (hand-placed sprite)
 	PixSprite.draw(self, PixSprite.SPUD, Vector2(0, -1), 3.0, hurt_flash())
 	if armor:
 		draw_arc(Vector2.ZERO, 26.0, PI * 0.9, PI * 2.1, 14, Color(0.3, 0.42, 0.2), 6.0)
 		draw_circle(Vector2(-18, -18), 7.0, Color(0.3, 0.42, 0.2))
 		draw_circle(Vector2(18, -18), 7.0, Color(0.3, 0.42, 0.2))
-	# stone skin
 	if skin_t > 0.0:
 		var st := body_pts.duplicate()
 		for i in st.size():
@@ -372,10 +367,8 @@ func _draw() -> void:
 		draw_circle(Vector2(10, -6), 2.4, Color.BLACK)
 		draw_circle(Vector2(-3, -6), 4.0, Color.WHITE)
 		draw_circle(Vector2(-1, -6), 2.0, Color.BLACK)
-	# earned armour pieces (tiers from boss drops)
 	if game != null and not prologue:
 		_draw_armor_pieces()
-	# Root-Blade
 	var swing := 0.0
 	if attack_t > 0.0:
 		swing = 1.0 - attack_t / ATTACK_T
@@ -385,7 +378,6 @@ func _draw() -> void:
 	draw_colored_polygon(_rot(blade, ang, base), Color("2f4a22"))
 	draw_polyline(_rot(PackedVector2Array([base + Vector2(10, -2), base + Vector2(46, -14), base + Vector2(58, -30)]), ang, base), Color("9fd070"), 2.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# slash arc
 	if attack_t > 0.0:
 		var k := 1.0 - attack_t / ATTACK_T
 		var a0 := -1.5 if facing > 0 else PI + 1.5
@@ -401,27 +393,27 @@ func _tc(slot: int) -> Color:
 
 func _draw_armor_pieces() -> void:
 	var tiers: Array = game.armor_tiers
-	if int(tiers[4]) > 0:   # greaves
+	if int(tiers[4]) > 0:
 		var c := _tc(4)
 		Art.shape(self, Art.P([-19, 19, -3, 19, -2, 31, -21, 31]), c, 0.0, 2.0)
 		Art.shape(self, Art.P([3, 19, 19, 19, 23, 31, 3, 31]), c, 0.0, 2.0)
-	if int(tiers[2]) > 0:   # cuirass
+	if int(tiers[2]) > 0:
 		var c := _tc(2)
 		Art.shape(self, Art.P([-15, -8, 15, -8, 17, 12, 0, 18, -17, 12]), c, 0.0, 2.2)
 		draw_line(Vector2(0, -8), Vector2(0, 17), Art.INK, 1.5)
-	if int(tiers[1]) > 0:   # pauldrons
+	if int(tiers[1]) > 0:
 		var c := _tc(1)
 		Art.shape(self, Art.P([-24, -14, -10, -18, -8, -6, -22, -2]), c, 0.0, 2.0)
 		Art.shape(self, Art.P([10, -18, 24, -14, 22, -2, 8, -6]), c, 0.0, 2.0)
 		if int(tiers[1]) >= 4:
 			Art.shape(self, Art.P([-20, -14, -18, -26, -14, -15]), c.darkened(0.2), 0.0, 1.6)
 			Art.shape(self, Art.P([14, -15, 18, -26, 20, -14]), c.darkened(0.2), 0.0, 1.6)
-	if int(tiers[0]) > 0:   # helm (over the top of the tuber)
+	if int(tiers[0]) > 0:
 		var c := _tc(0)
 		Art.shape(self, Art.P([-16, -14, -12, -26, 0, -30, 12, -26, 16, -14, 8, -15, 0, -17, -8, -15]), c, 0.0, 2.2)
 		if int(tiers[0]) >= 3:
 			Art.shape(self, Art.P([-2, -30, 2, -30, 4, -42, -4, -42]), Color(0.7, 0.1, 0.1), 0.0, 1.5)
-	if int(tiers[3]) > 0:   # gauntlet on the sword hand
+	if int(tiers[3]) > 0:
 		var c := _tc(3)
 		Art.shape(self, Art.P([14, 2, 26, 0, 28, 12, 15, 14]), c, 0.0, 2.0)
 
