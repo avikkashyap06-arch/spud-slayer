@@ -7,8 +7,8 @@ const WIND := {"fan": 0.5, "ring": 0.7, "rain": 0.5, "homing": 0.5, "wave": 0.5,
 
 var game
 var d: Dictionary = {}
-var hp := 100.0
-var max_hp := 100.0
+var hp := 50.0
+var max_hp := 50.0
 var size := Vector2(100, 100)
 var fly := false
 var col := Color.RED
