@@ -2,7 +2,7 @@ class_name Player
 extends Node2D
 ## Spud. Position is at his feet.
 
-const GRAV := 2350.0
+const GRAV := 3200.0
 const MOVE := 345.0
 const JUMP_V := -1050.0
 const DJUMP_V := -1050.0
